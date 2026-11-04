@@ -74,3 +74,66 @@ Bạn cũng có thể kết nối bằng các công cụ quản trị giao diệ
 ### 8. Lưu ý an toàn quan trọng
 - **Tuyệt đối không commit file `.env` lên Git:** File `.env` chứa mật khẩu riêng của bạn và đã được cấu hình trong `.gitignore` để không bị đẩy lên repository.
 - **Không dùng cờ `-v` khi tắt container:** Tuyệt đối tránh chạy `docker compose down -v` vì cờ `-v` sẽ xóa sạch Docker named volume `postgres_data`, làm mất toàn bộ dữ liệu database đã tạo.
+
+---
+
+## Hướng dẫn thiết lập và chạy Flask Backend (BS-03)
+
+### 1. Chuẩn bị môi trường Python
+Yêu cầu: Python 3.11 trở lên.
+
+Tạo và kích hoạt môi trường ảo (virtual environment):
+
+- **Windows (PowerShell):**
+  ```powershell
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  ```
+- **Linux / macOS / Git Bash:**
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  ```
+
+### 2. Cài đặt thư viện dependencies
+Cài đặt các gói thư viện cần thiết cho môi trường phát triển và kiểm thử:
+```bash
+pip install -r backend/requirements-dev.txt
+```
+
+### 3. Kết nối PostgreSQL Docker
+Backend tự động đọc các biến kết nối từ file `.env` ở thư mục gốc (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`).
+
+Trước khi kiểm tra API kết nối database, đảm bảo container PostgreSQL đang chạy:
+```bash
+docker compose up -d
+```
+
+### 4. Khởi chạy ứng dụng Flask
+Chạy trực tiếp backend bằng lệnh:
+```bash
+python -m backend.app
+```
+Mặc định ứng dụng sẽ lắng nghe tại địa chỉ: `http://127.0.0.1:5000`
+
+### 5. Kiểm tra hai API
+Có thể kiểm tra trực tiếp qua trình duyệt web, Postman, hoặc `curl`:
+
+- **API kiểm tra ứng dụng Flask (không phụ thuộc database):**
+  - **URL:** `GET http://127.0.0.1:5000/api/health`
+  - **Phản hồi:** `200 OK`
+  - **JSON:** `{"status": "ok"}`
+
+- **API kiểm tra kết nối PostgreSQL:**
+  - **URL:** `GET http://127.0.0.1:5000/api/health/db`
+  - **Khi kết nối thành công:** `200 OK`
+    - **JSON:** `{"database": "connected", "status": "ok"}`
+  - **Khi lỗi hoặc database chưa bật:** `503 Service Unavailable`
+    - **JSON:** `{"message": "Database connection failed", "status": "error"}`
+
+### 6. Chạy kiểm thử tự động (pytest)
+Chạy bộ kiểm thử tự động:
+```bash
+pytest -v
+```
+Bộ test bao gồm các test case kiểm tra mã HTTP, định dạng JSON và giả lập (mock) trạng thái kết nối database mà không bắt buộc PostgreSQL phải chạy.
