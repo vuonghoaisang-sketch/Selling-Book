@@ -1,0 +1,33 @@
+# Môi trường (Environment variables)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Hệ điều hành
+.DS_Store
+Thumbs.db
