@@ -1,4 +1,5 @@
 # Bán Sách (Selling-Book)
+
 Website Bán Sách - Đồ án môn Phần mềm mã nguồn mở
 
 ---
@@ -8,10 +9,12 @@ Website Bán Sách - Đồ án môn Phần mềm mã nguồn mở
 Mỗi thành viên trong nhóm phát triển chạy một cơ sở dữ liệu PostgreSQL riêng biệt trên máy cá nhân của mình thông qua Docker Compose. Điều này giúp môi trường độc lập, tránh xung đột dữ liệu khi làm việc song song và không phụ thuộc vào kết nối mạng bên ngoài.
 
 ### 1. Công cụ cần cài đặt
+
 - **Git**
 - **Docker Desktop** (trên Windows / macOS) hoặc **Docker Engine & Docker Compose plugin** (trên Linux)
 
 ### 2. Tạo file môi trường `.env`
+
 Sao chép file `.env.example` thành `.env`:
 
 - **Windows (PowerShell):**
@@ -24,7 +27,9 @@ Sao chép file `.env.example` thành `.env`:
   ```
 
 ### 3. Đổi mật khẩu trong `.env`
+
 Mở file `.env` vừa tạo và cập nhật lại biến `POSTGRES_PASSWORD` bằng mật khẩu an toàn của riêng bạn trên máy cá nhân:
+
 ```env
 POSTGRES_DB=ban_sach_db
 POSTGRES_USER=ban_sach_user
@@ -33,24 +38,33 @@ POSTGRES_PORT=5433
 ```
 
 ### 4. Khởi động database
+
 Chạy lệnh sau để tải image và khởi chạy PostgreSQL dưới nền:
+
 ```bash
 docker compose up -d
 ```
 
 ### 5. Kiểm tra trạng thái container
+
 Xem danh sách container đang chạy và trạng thái sức khỏe:
+
 ```bash
 docker compose ps
 ```
+
 Khi container sẵn sàng, cột `STATUS` sẽ hiển thị `healthy`.
 
 ### 6. Kiểm tra kết nối PostgreSQL
+
 Kiểm tra khả năng phản hồi của PostgreSQL qua `pg_isready`:
+
 ```bash
 docker compose exec db pg_isready -U ban_sach_user -d ban_sach_db
 ```
+
 Bạn cũng có thể kết nối bằng các công cụ quản trị giao diện (DBeaver, pgAdmin, TablePlus, VS Code extension) với thông tin:
+
 - **Host:** `127.0.0.1`
 - **Port:** `5433` (hoặc cổng cấu hình trong `.env`)
 - **Database:** `ban_sach_db`
@@ -58,6 +72,7 @@ Bạn cũng có thể kết nối bằng các công cụ quản trị giao diệ
 - **Password:** mật khẩu bạn đã đặt trong `.env`
 
 ### 7. Cách dừng và chạy lại database
+
 - **Tạm dừng database:**
   ```bash
   docker compose stop
@@ -72,6 +87,7 @@ Bạn cũng có thể kết nối bằng các công cụ quản trị giao diệ
   ```
 
 ### 8. Lưu ý an toàn quan trọng
+
 - **Tuyệt đối không commit file `.env` lên Git:** File `.env` chứa mật khẩu riêng của bạn và đã được cấu hình trong `.gitignore` để không bị đẩy lên repository.
 - **Không dùng cờ `-v` khi tắt container:** Tuyệt đối tránh chạy `docker compose down -v` vì cờ `-v` sẽ xóa sạch Docker named volume `postgres_data`, làm mất toàn bộ dữ liệu database đã tạo.
 
@@ -80,6 +96,7 @@ Bạn cũng có thể kết nối bằng các công cụ quản trị giao diệ
 ## Hướng dẫn thiết lập và chạy Flask Backend (BS-03)
 
 ### 1. Chuẩn bị môi trường Python
+
 Yêu cầu: Python 3.11 trở lên.
 
 Tạo và kích hoạt môi trường ảo (virtual environment):
@@ -96,27 +113,35 @@ Tạo và kích hoạt môi trường ảo (virtual environment):
   ```
 
 ### 2. Cài đặt thư viện dependencies
+
 Cài đặt các gói thư viện cần thiết cho môi trường phát triển và kiểm thử:
+
 ```bash
 pip install -r backend/requirements-dev.txt
 ```
 
 ### 3. Kết nối PostgreSQL Docker
+
 Backend tự động đọc các biến kết nối từ file `.env` ở thư mục gốc (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`).
 
 Trước khi kiểm tra API kết nối database, đảm bảo container PostgreSQL đang chạy:
+
 ```bash
 docker compose up -d
 ```
 
 ### 4. Khởi chạy ứng dụng Flask
+
 Chạy trực tiếp backend bằng lệnh:
+
 ```bash
 python -m backend.app
 ```
+
 Mặc định ứng dụng sẽ lắng nghe tại địa chỉ: `http://127.0.0.1:5000`
 
 ### 5. Kiểm tra hai API
+
 Có thể kiểm tra trực tiếp qua trình duyệt web, Postman, hoặc `curl`:
 
 - **API kiểm tra ứng dụng Flask (không phụ thuộc database):**
@@ -132,8 +157,30 @@ Có thể kiểm tra trực tiếp qua trình duyệt web, Postman, hoặc `curl
     - **JSON:** `{"message": "Database connection failed", "status": "error"}`
 
 ### 6. Chạy kiểm thử tự động (pytest)
+
 Chạy bộ kiểm thử tự động:
+
 ```bash
 pytest -v
 ```
+
 Bộ test bao gồm các test case kiểm tra mã HTTP, định dạng JSON và giả lập (mock) trạng thái kết nối database mà không bắt buộc PostgreSQL phải chạy.
+
+## Hướng dẫn chạy Database Migration (Alembic)
+
+### 1. Điều kiện tiên quyết
+
+- Container PostgreSQL đang chạy (`docker compose up -d`).
+- File `.env` ở thư mục gốc đã cấu hình đúng thông tin kết nối (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`).
+- Đã kích hoạt môi trường ảo `.venv` và cài đặt thư viện (`pip install -r backend/requirements-dev.txt`).
+
+### 2. Áp dụng migration để tạo bảng trong PostgreSQL
+
+- Chạy lệnh sau tại thư mục gốc của dự án: `python -m alembic upgrade head`
+- Kiểm tra trạng thái migration hiện tại (nếu hiển thị mã revision kèm `(head)` là đã tạo bảng thành công): `python -m alembic current`
+
+### 3. Tạo migration mới (khi có chỉnh sửa trong `backend/models.py`)
+
+- Nếu ở các task sau có thêm cột hoặc thay đổi model, chạy lệnh sau để sinh file migration mới: `python -m alembic revision --autogenerate -m "mo_ta_thay_doi"`
+
+- Sau đó kiểm tra lại file vừa sinh ra trong thư mục `alembic/versions/` và chạy `python -m alembic upgrade head` để cập nhật vào database.
