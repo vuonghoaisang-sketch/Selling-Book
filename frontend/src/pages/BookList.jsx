@@ -1,60 +1,16 @@
-import { useEffect, useState } from 'react'
 import BookCard from '../components/BookCard'
-import { getBooks } from '../api/books'
+import books from '../data/books'
 
-// Trang danh sách: lấy sách từ API và hiển thị
-// onSelectBook: hàm do App truyền xuống, gọi khi người dùng chọn xem chi tiết một cuốn sách
-function BookList({ onSelectBook }) {
-  const [books, setBooks] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  // Chạy một lần khi trang hiện ra: gọi API lấy danh sách sách
-  useEffect(() => {
-    let ignore = false
-
-    getBooks()
-      .then((data) => {
-        if (!ignore) setBooks(data)
-      })
-      .catch(() => {
-        if (!ignore) setError('Không thể tải danh sách sách. Vui lòng thử lại sau.')
-      })
-      .finally(() => {
-        if (!ignore) setLoading(false)
-      })
-
-    return () => {
-      ignore = true
-    }
-  }, [])
-
-  // Chọn nội dung hiển thị theo trạng thái
-  let content
-  if (loading) {
-    content = <p className="status-message">Đang tải danh sách sách...</p>
-  } else if (error) {
-    content = <p className="status-message error-message">{error}</p>
-  } else if (books.length === 0) {
-    content = <p className="status-message">Chưa có sách nào trong cửa hàng.</p>
-  } else {
-    content = (
-      <div className="book-grid">
-        {books.map((book) => (
-          <BookCard
-            key={book.id}
-            book={book}
-            onSelect={() => onSelectBook(book.id)}
-          />
-        ))}
-      </div>
-    )
-  }
-
+// Trang danh sách: hiển thị toàn bộ sách mẫu
+function BookList() {
   return (
     <div className="container page">
       <h2>Danh sách sách</h2>
-      {content}
+      <div className="book-grid">
+        {books.map((book) => (
+          <BookCard key={book.id} book={book} />
+        ))}
+      </div>
     </div>
   )
 }
