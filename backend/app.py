@@ -2,6 +2,7 @@ import os
 
 from flask import Flask, jsonify, request, session
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from werkzeug.security import check_password_hash
 
@@ -27,6 +28,62 @@ def admin_to_dict(admin: Admin) -> dict:
         "id": admin.id,
         "username": admin.username,
     }
+
+
+MAX_INT = 2147483647  # Giá trị lớn nhất của cột Integer trong PostgreSQL
+
+
+def validate_book_data(data, partial=False):
+    """Kiểm tra dữ liệu sách gửi lên từ Admin.
+
+    partial=False (thêm sách): bắt buộc có title, author, price, stock.
+    partial=True (cập nhật): chỉ kiểm tra những trường được gửi lên.
+
+    Trả về (dữ liệu_đã_làm_sạch, None) nếu hợp lệ,
+    hoặc (None, "thông báo lỗi") nếu không hợp lệ.
+    """
+    if not isinstance(data, dict):
+        return None, "Request body must be a JSON object"
+
+    if not partial:
+        for field in ("title", "author", "price", "stock"):
+            if field not in data:
+                return None, f"{field} is required"
+
+    clean = {}
+
+    for field, max_length in (("title", 255), ("author", 150)):
+        if field in data:
+            value = data[field]
+            if not isinstance(value, str) or not value.strip():
+                return None, f"{field} must be a non-empty string"
+            value = value.strip()
+            if len(value) > max_length:
+                return None, f"{field} must be at most {max_length} characters"
+            clean[field] = value
+
+    if "description" in data:
+        value = data["description"]
+        if value is not None and not isinstance(value, str):
+            return None, "description must be a string or null"
+        clean["description"] = value
+
+    for field in ("price", "stock"):
+        if field in data:
+            value = data[field]
+            # bool cũng là int trong Python nên phải loại riêng
+            if isinstance(value, bool) or not isinstance(value, int):
+                return None, f"{field} must be an integer"
+            if value < 0:
+                return None, f"{field} must not be negative"
+            if value > MAX_INT:
+                return None, f"{field} is too large"
+            clean[field] = value
+
+    if partial and not clean:
+        return None, "No valid fields to update"
+
+    return clean, None
 
 
 def create_app(session_factory=None) -> Flask:
@@ -143,6 +200,93 @@ def create_app(session_factory=None) -> Flask:
         """API đăng xuất Admin bằng cách xóa Flask session."""
         session.clear()
         return jsonify({"message": "Logout successful"}), 200
+
+    def check_admin(db_session):
+        """Kiểm tra phiên đăng nhập Admin (dùng chung cho các API quản lý sách).
+
+        Trả về None nếu Admin hợp lệ.
+        Trả về response lỗi 401 nếu chưa đăng nhập hoặc Admin không còn tồn tại.
+        """
+        admin_id = session.get("admin_id")
+        if admin_id is None or db_session.get(Admin, admin_id) is None:
+            session.clear()
+            return jsonify({"error": "Unauthorized"}), 401
+        return None
+
+    @app.route("/api/admin/books", methods=["GET"])
+    def admin_list_books():
+        """API Admin: lấy danh sách toàn bộ sách trong database."""
+        with session_factory() as db_session:
+            error = check_admin(db_session)
+            if error is not None:
+                return error
+
+            books = db_session.scalars(select(Book).order_by(Book.id)).all()
+            return jsonify([book_to_dict(book) for book in books]), 200
+
+    @app.route("/api/admin/books", methods=["POST"])
+    def admin_create_book():
+        """API Admin: thêm một cuốn sách mới. Thành công trả về 201."""
+        with session_factory() as db_session:
+            error = check_admin(db_session)
+            if error is not None:
+                return error
+
+            data = request.get_json(silent=True)
+            clean, message = validate_book_data(data)
+            if message is not None:
+                return jsonify({"error": message}), 400
+
+            book = Book(**clean)
+            db_session.add(book)
+            db_session.commit()
+            db_session.refresh(book)
+            return jsonify(book_to_dict(book)), 201
+
+    @app.route("/api/admin/books/<int:book_id>", methods=["PATCH"])
+    def admin_update_book(book_id):
+        """API Admin: cập nhật một số trường của sách. Thành công trả về 200."""
+        with session_factory() as db_session:
+            error = check_admin(db_session)
+            if error is not None:
+                return error
+
+            book = db_session.get(Book, book_id)
+            if book is None:
+                return jsonify({"error": "Book not found"}), 404
+
+            data = request.get_json(silent=True)
+            clean, message = validate_book_data(data, partial=True)
+            if message is not None:
+                return jsonify({"error": message}), 400
+
+            for field, value in clean.items():
+                setattr(book, field, value)
+            db_session.commit()
+            db_session.refresh(book)
+            return jsonify(book_to_dict(book)), 200
+
+    @app.route("/api/admin/books/<int:book_id>", methods=["DELETE"])
+    def admin_delete_book(book_id):
+        """API Admin: xóa một cuốn sách. Thành công trả về 200."""
+        with session_factory() as db_session:
+            error = check_admin(db_session)
+            if error is not None:
+                return error
+
+            book = db_session.get(Book, book_id)
+            if book is None:
+                return jsonify({"error": "Book not found"}), 404
+
+            try:
+                db_session.delete(book)
+                db_session.commit()
+            except IntegrityError:
+                # Sách đã nằm trong đơn hàng nên database không cho xóa
+                db_session.rollback()
+                return jsonify({"error": "Book is used in orders and cannot be deleted"}), 409
+
+            return jsonify({"message": "Book deleted"}), 200
 
     return app
 
