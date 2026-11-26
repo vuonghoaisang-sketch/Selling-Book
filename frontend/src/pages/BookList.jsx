@@ -4,7 +4,8 @@ import { getBooks } from '../api/books'
 
 // Trang danh sách: lấy sách từ API và hiển thị
 // onSelectBook: hàm do App truyền xuống, gọi khi người dùng chọn xem chi tiết một cuốn sách
-function BookList({ onSelectBook }) {
+// onAddToCart: hàm do App truyền xuống, gọi khi người dùng thêm sách vào giỏ hàng
+function BookList({ onSelectBook, onAddToCart }) {
   const [books, setBooks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -45,6 +46,7 @@ function BookList({ onSelectBook }) {
             key={book.id}
             book={book}
             onSelect={() => onSelectBook(book.id)}
+            onAddToCart={onAddToCart ? () => onAddToCart(book) : undefined}
           />
         ))}
       </div>
