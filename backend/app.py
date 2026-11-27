@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from werkzeug.security import check_password_hash
 
 from backend.db import check_db_connection, get_database_url
-from backend.models import Admin, Book
+from backend.models import Admin, Book, Order, OrderItem
 
 
 def book_to_dict(book: Book) -> dict:
@@ -83,6 +83,67 @@ def validate_book_data(data, partial=False):
     if partial and not clean:
         return None, "No valid fields to update"
 
+    return clean, None
+
+
+def validate_order_data(data):
+    """Kiểm tra dữ liệu đặt hàng do khách gửi lên (Guest Checkout).
+
+    Chỉ đọc customer_name, phone, shipping_address và items (book_id, quantity).
+    Mọi trường khác (ví dụ unit_price, subtotal, total_amount) đều bị bỏ qua,
+    vì giá tiền luôn do Backend lấy từ database.
+
+    Trả về (dữ_liệu_đã_làm_sạch, None) nếu hợp lệ,
+    hoặc (None, "thông báo lỗi") nếu không hợp lệ.
+    """
+    if not isinstance(data, dict):
+        return None, "Dữ liệu đặt hàng phải là một đối tượng JSON hợp lệ"
+
+    clean = {}
+
+    # (tên trường, tên hiển thị, độ dài tối đa theo model Order)
+    # customer_address là Text nên không có giới hạn cột; đặt tối đa 500 ký tự.
+    for field, label, max_length in (
+        ("customer_name", "Họ và tên", 150),
+        ("phone", "Số điện thoại", 20),
+        ("shipping_address", "Địa chỉ giao hàng", 500),
+    ):
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return None, f"{label} không được để trống"
+        value = value.strip()
+        if len(value) > max_length:
+            return None, f"{label} không được vượt quá {max_length} ký tự"
+        clean[field] = value
+
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return None, "Giỏ hàng không được để trống"
+
+    clean_items = []
+    seen_book_ids = set()
+    for item in items:
+        if not isinstance(item, dict):
+            return None, "Danh sách sản phẩm không đúng định dạng"
+
+        book_id = item.get("book_id")
+        # bool cũng là int trong Python nên phải loại riêng
+        if isinstance(book_id, bool) or not isinstance(book_id, int) \
+                or book_id < 1 or book_id > MAX_INT:
+            return None, "Mã sách không hợp lệ"
+
+        quantity = item.get("quantity")
+        if isinstance(quantity, bool) or not isinstance(quantity, int) \
+                or quantity < 1 or quantity > MAX_INT:
+            return None, "Số lượng phải là số nguyên lớn hơn 0"
+
+        if book_id in seen_book_ids:
+            return None, "Mỗi cuốn sách chỉ được xuất hiện một lần trong đơn hàng"
+        seen_book_ids.add(book_id)
+
+        clean_items.append({"book_id": book_id, "quantity": quantity})
+
+    clean["items"] = clean_items
     return clean, None
 
 
@@ -288,6 +349,112 @@ def create_app(session_factory=None) -> Flask:
 
             return jsonify({"message": "Book deleted"}), 200
 
+    @app.route("/api/orders", methods=["POST"])
+    def create_order():
+        """API khách hàng: đặt hàng không cần tài khoản (Guest Checkout).
+
+        Giá lấy từ database, không dùng bất kỳ giá nào do Frontend gửi lên.
+        Tạo Order, OrderItem và trừ tồn kho nằm trong cùng một transaction.
+        Thành công trả về 201; lỗi trả về {"message": ...} (400, 404, 409, 500).
+        """
+        data = request.get_json(silent=True)
+        clean, message = validate_order_data(data)
+        if message is not None:
+            return jsonify({"message": message}), 400
+
+        requested = clean["items"]
+        book_ids = [item["book_id"] for item in requested]
+
+        with session_factory() as db_session:
+            try:
+                # Khóa các dòng sách (theo thứ tự id) để hai đơn đặt cùng lúc
+                # không thể cùng trừ vào một lượng tồn kho.
+                books = db_session.scalars(
+                    select(Book)
+                    .where(Book.id.in_(book_ids))
+                    .order_by(Book.id)
+                    .with_for_update()
+                ).all()
+                books_by_id = {book.id: book for book in books}
+
+                # Bước 1: kiểm tra TẤT CẢ sách tồn tại, chưa thay đổi gì.
+                for item in requested:
+                    if item["book_id"] not in books_by_id:
+                        db_session.rollback()
+                        return jsonify({
+                            "message": f"Không tìm thấy sách có mã {item['book_id']}"
+                        }), 404
+
+                # Bước 2: kiểm tra TẤT CẢ tồn kho, chưa thay đổi gì.
+                for item in requested:
+                    book = books_by_id[item["book_id"]]
+                    if item["quantity"] > book.stock:
+                        db_session.rollback()
+                        return jsonify({
+                            "message": (
+                                f"Sách \"{book.title}\" không đủ số lượng trong kho "
+                                f"(còn {book.stock})"
+                            )
+                        }), 409
+
+                # Bước 3: tính tiền bằng giá trong database (số nguyên, không dùng float).
+                order_items = []
+                response_items = []
+                total_amount = 0
+                for item in requested:
+                    book = books_by_id[item["book_id"]]
+                    unit_price = book.price
+                    subtotal = unit_price * item["quantity"]
+                    total_amount += subtotal
+                    order_items.append(OrderItem(
+                        book_id=book.id,
+                        quantity=item["quantity"],
+                        unit_price=unit_price,
+                    ))
+                    response_items.append({
+                        "book_id": book.id,
+                        "quantity": item["quantity"],
+                        "unit_price": unit_price,
+                        "subtotal": subtotal,
+                    })
+
+                if total_amount > MAX_INT:
+                    db_session.rollback()
+                    return jsonify({
+                        "message": "Tổng tiền đơn hàng vượt quá giới hạn cho phép"
+                    }), 400
+
+                # Bước 4: tạo đơn, trừ tồn kho, rồi commit một lần duy nhất.
+                order = Order(
+                    customer_name=clean["customer_name"],
+                    customer_phone=clean["phone"],
+                    customer_address=clean["shipping_address"],
+                    total_amount=total_amount,
+                    items=order_items,
+                )
+                db_session.add(order)
+                for item in requested:
+                    books_by_id[item["book_id"]].stock -= item["quantity"]
+
+                db_session.flush()  # để Order nhận được id
+                order_id = order.id
+                db_session.commit()
+            except Exception:
+                # Lỗi bất ngờ: hoàn tác toàn bộ, không để lộ chi tiết nội bộ.
+                db_session.rollback()
+                return jsonify({
+                    "message": "Không thể đặt hàng lúc này. Vui lòng thử lại sau"
+                }), 500
+
+        return jsonify({
+            "message": "Đặt hàng thành công",
+            "order": {
+                "id": order_id,
+                "total_amount": total_amount,
+                "items": response_items,
+            },
+        }), 201
+
     return app
 
 
@@ -295,3 +462,4 @@ if __name__ == "__main__":
     app = create_app()
     # Chạy Flask tại localhost:5000 (mặc định debug=False)
     app.run(host="127.0.0.1", port=5000, debug=False)
+    
